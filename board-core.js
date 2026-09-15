@@ -5,7 +5,7 @@
 // logic drift apart. Page-specific code (which columns to show, page layout) stays in each HTML file.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, doc, setDoc, updateDoc, deleteField, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 export const STORAGE_KEY = "ops-board-v1";
 export const SYNC_CODE_KEY = "ops-board-sync-code";
@@ -190,25 +190,139 @@ function queueCloudPush() {
   cloudSyncTimer = setTimeout(pushToCloud, 500);
 }
 
+// Cloud writes are per-task field patches, not a "whole tasks array" overwrite. The old
+// approach (setDoc of the entire tasks array on every change) meant two people editing
+// *different* tasks around the same time could stomp each other: whoever's debounced push
+// landed second would silently resurrect whatever stale copy of *every other task* their
+// browser last had in memory - e.g. a teammate's just-deleted note reappearing because someone
+// else's unrelated save re-sent their outdated version of that same task. Tracking exactly
+// which task ids changed and writing only those (via Firestore's dot-path field updates) means
+// concurrent edits to different tasks can never clobber each other. Editing the *same* task at
+// the exact same moment can still race, but that's a much narrower, expected kind of conflict.
+var dirtyTaskIds = new Set();
+var deletedTaskIds = new Set();
+var categoriesDirty = false;
+
+function markTaskDirty(id) { dirtyTaskIds.add(id); deletedTaskIds.delete(id); }
+function markTaskDeleted(id) { deletedTaskIds.add(id); dirtyTaskIds.delete(id); }
+function markCategoriesDirty() { categoriesDirty = true; }
+
+function tasksArrayToMap(arr) {
+  var m = {};
+  arr.forEach(function (t) { m[t.id] = t; });
+  return m;
+}
+
 function pushToCloud() {
   var ref = doc(db, "boards", syncCode);
-  setDoc(ref, { categories: state.categories, tasks: state.tasks, savedAt: Date.now() })
+  var dirty = dirtyTaskIds;
+  var deleted = deletedTaskIds;
+  var catsDirty = categoriesDirty;
+  dirtyTaskIds = new Set();
+  deletedTaskIds = new Set();
+  categoriesDirty = false;
+
+  var patch = { savedAt: Date.now() };
+  if (catsDirty) patch.categories = state.categories;
+  dirty.forEach(function (id) {
+    var t = state.tasks.find(function (x) { return x.id === id; });
+    if (t) patch["tasks." + id] = t;
+  });
+  deleted.forEach(function (id) { patch["tasks." + id] = deleteField(); });
+
+  updateDoc(ref, patch)
     .then(function () {
       setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
     })
-    .catch(function () {
+    .catch(function (err) {
+      // Brand new board (doc doesn't exist yet) - seed it with everything currently local.
+      if (err && err.code === "not-found") {
+        setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() })
+          .then(function () {
+            setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
+          })
+          .catch(function () { setSyncStatus("동기화 실패 (오프라인?)", "err"); });
+        return;
+      }
+      // Put the markers back so the next push retries this same patch.
+      dirty.forEach(function (id) { dirtyTaskIds.add(id); });
+      deleted.forEach(function (id) { deletedTaskIds.add(id); });
+      if (catsDirty) categoriesDirty = true;
       setSyncStatus("동기화 실패 (오프라인?)", "err");
     });
 }
 
+// One-off: a board still holding the old "tasks as a whole array" shape gets rewritten as a
+// map the first time any client with this code reads it, so future per-task patches apply
+// cleanly (Firestore's dot-path updates need `tasks` to already be a map, not an array).
+function migrateLegacyArrayShape() {
+  var ref = doc(db, "boards", syncCode);
+  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() }).catch(function () {});
+}
+
+// A remote update is allowed through mid-typing in the one place that isn't guarded by
+// openForm/editingSubtask: the "+ 하위 항목 추가" quick-add box (committing it doesn't open a
+// tracked editing mode, it's just a bare input). A full re-render would otherwise destroy that
+// input - along with whatever was typed but not yet submitted - out from under the typist.
+// Capture it before re-rendering and restore it after, on the same task's card if still present.
+function captureTypingInProgress() {
+  var el = document.activeElement;
+  if (!el || !el.matches || !el.matches("[data-subtask-new]")) return null;
+  var card = el.closest(".card");
+  if (!card) return null;
+  return { cardId: card.dataset.cardId, value: el.value, selStart: el.selectionStart, selEnd: el.selectionEnd };
+}
+
+function restoreTypingInProgress(captured) {
+  if (!captured) return;
+  var el = document.querySelector('.card[data-card-id="' + captured.cardId + '"] [data-subtask-new]');
+  if (!el) return;
+  el.value = captured.value;
+  el.focus();
+  try { el.setSelectionRange(captured.selStart, captured.selEnd); } catch (e) {}
+}
+
 function applyRemoteState(data) {
-  state.categories = Array.isArray(data.categories) && data.categories.length ? data.categories : DEFAULT_CATEGORIES.slice();
-  state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  var typing = captureTypingInProgress();
+
+  state.categories = categoriesDirty
+    ? state.categories
+    : (Array.isArray(data.categories) && data.categories.length ? data.categories : DEFAULT_CATEGORIES.slice());
+
+  var incomingTasks;
+  if (Array.isArray(data.tasks)) {
+    incomingTasks = data.tasks;
+  } else if (data.tasks && typeof data.tasks === "object") {
+    incomingTasks = Object.keys(data.tasks).map(function (id) {
+      var t = data.tasks[id];
+      if (!t.id) t.id = id;
+      return t;
+    });
+  } else {
+    incomingTasks = [];
+  }
+
+  // Don't let an incoming snapshot clobber a local change that hasn't been pushed to the
+  // server yet: for any task we know is dirty/deleted locally, keep our in-memory version (it
+  // will win once our own debounced push lands); every other task takes the fresh remote value.
+  // Without this, a snapshot landing in the narrow window between "user made an edit" and "that
+  // edit's 500ms-debounced push completed" would silently revert the edit right back out.
+  var localById = {};
+  state.tasks.forEach(function (t) { localById[t.id] = t; });
+  var merged = incomingTasks
+    .filter(function (t) { return !deletedTaskIds.has(t.id); })
+    .map(function (t) { return (dirtyTaskIds.has(t.id) && localById[t.id]) ? localById[t.id] : t; });
+  state.tasks.forEach(function (t) {
+    if (dirtyTaskIds.has(t.id) && !merged.some(function (m) { return m.id === t.id; })) merged.push(t);
+  });
+  state.tasks = merged;
+
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   activeFilters.forEach(function (id) {
     if (!state.categories.some(function (c) { return c.id === id; })) activeFilters.delete(id);
   });
   notifyRender();
+  restoreTypingInProgress(typing);
 }
 
 export function subscribeSync() {
@@ -226,6 +340,7 @@ export function subscribeSync() {
       return;
     }
     applyRemoteState(data);
+    if (Array.isArray(data.tasks) && data.tasks.length) migrateLegacyArrayShape();
     setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
   }, function () {
     setSyncStatus("동기화 연결 실패", "err");
@@ -289,8 +404,9 @@ export function visibleDatedTasks() {
 export function addTask(status, fields) {
   var minOrder = state.tasks.filter(function (t) { return t.status === status; })
     .reduce(function (m, t) { return Math.min(m, t.order); }, Date.now());
+  var id = uid();
   state.tasks.push({
-    id: uid(),
+    id: id,
     title: fields.title,
     category: fields.category,
     assignee: fields.assignee || getMyAssignee() || ASSIGNEES[0].id,
@@ -301,6 +417,7 @@ export function addTask(status, fields) {
     subtasks: [],
     updatedAt: Date.now()
   });
+  markTaskDirty(id);
   persist();
 }
 
@@ -313,11 +430,13 @@ export function updateTask(id, fields) {
   t.date = fields.date || "";
   t.notes = fields.notes || "";
   t.updatedAt = Date.now();
+  markTaskDirty(id);
   persist();
 }
 
 export function deleteTask(id) {
   state.tasks = state.tasks.filter(function (t) { return t.id !== id; });
+  markTaskDeleted(id);
   persist();
 }
 
@@ -333,6 +452,7 @@ export function addSubtask(taskId, text) {
   if (!t) return;
   ensureSubtasks(t).push({ id: uid(), text: text, done: false });
   t.updatedAt = Date.now();
+  markTaskDirty(taskId);
   persist();
 }
 
@@ -343,6 +463,7 @@ export function toggleSubtask(taskId, subtaskId) {
   if (!s) return;
   s.done = !s.done;
   t.updatedAt = Date.now();
+  markTaskDirty(taskId);
   persist();
 }
 
@@ -351,6 +472,7 @@ export function deleteSubtask(taskId, subtaskId) {
   if (!t) return;
   t.subtasks = ensureSubtasks(t).filter(function (x) { return x.id !== subtaskId; });
   t.updatedAt = Date.now();
+  markTaskDirty(taskId);
   persist();
 }
 
@@ -361,6 +483,7 @@ export function updateSubtaskText(taskId, subtaskId, text) {
   if (!s) return;
   s.text = text;
   t.updatedAt = Date.now();
+  markTaskDirty(taskId);
   persist();
 }
 
@@ -373,6 +496,7 @@ export function reorderSubtask(taskId, subtaskId, dropIndex) {
   var item = list.splice(idx, 1)[0];
   list.splice(dropIndex, 0, item);
   t.updatedAt = Date.now();
+  markTaskDirty(taskId);
   persist();
 }
 
@@ -387,6 +511,7 @@ export function moveTask(id, dir) {
   t.order = (targetOrders.length ? Math.min.apply(null, targetOrders) : Date.now()) - 1;
   t.status = newStatus;
   if (newStatus === "done") t.updatedAt = Date.now();
+  markTaskDirty(id);
   persist();
 }
 
@@ -406,6 +531,7 @@ export function dropTask(id, status, dropIndex) {
   var statusChanged = t.status !== status;
   t.status = status;
   if (statusChanged && status === "done") t.updatedAt = Date.now();
+  markTaskDirty(id);
   persist();
 }
 
@@ -413,6 +539,7 @@ export function addCategory(label, color) {
   label = label.trim();
   if (!label) return;
   state.categories.push({ id: "cat-" + uid(), label: label, color: color });
+  markCategoriesDirty();
   persist();
 }
 
@@ -421,6 +548,7 @@ export function updateCategory(id, fields) {
   if (!c) return;
   if (fields.label !== undefined) c.label = fields.label;
   if (fields.color !== undefined) c.color = fields.color;
+  markCategoriesDirty();
   persist();
 }
 
@@ -428,7 +556,8 @@ export function deleteCategory(id) {
   if (state.categories.length <= 1) return;
   state.categories = state.categories.filter(function (c) { return c.id !== id; });
   var fallback = state.categories[0].id;
-  state.tasks.forEach(function (t) { if (t.category === id) t.category = fallback; });
+  state.tasks.forEach(function (t) { if (t.category === id) { t.category = fallback; markTaskDirty(t.id); } });
+  markCategoriesDirty();
   persist();
 }
 
@@ -441,6 +570,7 @@ export function bulkAssignUnassignedDone(id) {
     if (t.status === "done" && !t.assignee) {
       t.assignee = id;
       t.updatedAt = Date.now();
+      markTaskDirty(t.id);
       count++;
     }
   });
@@ -448,12 +578,24 @@ export function bulkAssignUnassignedDone(id) {
   return count;
 }
 
+// Explicit "restore from backup" - unlike routine edits, this really does mean "replace
+// everything with what's in the file", so every task gets marked dirty (and old cloud tasks
+// that aren't in the import stay deleted via a plain setDoc, not a patch).
 export function importState(parsed) {
   if (!parsed || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.categories)) return false;
   state.categories = parsed.categories;
   state.tasks = parsed.tasks;
   activeFilters.clear();
-  persist();
+  var ref = doc(db, "boards", syncCode);
+  dirtyTaskIds.clear();
+  deletedTaskIds.clear();
+  categoriesDirty = false;
+  setSyncStatus("동기화 중…", "pending");
+  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() })
+    .then(function () { setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok"); })
+    .catch(function () { setSyncStatus("동기화 실패 (오프라인?)", "err"); });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  notifyRender();
   return true;
 }
 
