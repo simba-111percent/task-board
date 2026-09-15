@@ -178,7 +178,7 @@ function renderCalendar() {
   var todayIso = Core.todayISO();
 
   var cells = [];
-  for (var i = 0; i < firstWeekday; i++) cells.push('<div class="cal-cell empty"></div>');
+  for (var i = 0; i < firstWeekday; i++) cells.push('<div class="cal-cell cal-empty"></div>');
   for (var d = 1; d <= daysInMonth; d++) {
     var dateStr = isoOf(viewYear, viewMonth, d);
     var dayTasks = byDate[dateStr] || [];
@@ -194,7 +194,7 @@ function renderCalendar() {
   }
   var total = firstWeekday + daysInMonth;
   var trailing = (7 - (total % 7)) % 7;
-  for (var j = 0; j < trailing; j++) cells.push('<div class="cal-cell empty"></div>');
+  for (var j = 0; j < trailing; j++) cells.push('<div class="cal-cell cal-empty"></div>');
 
   document.getElementById("calGrid").innerHTML = cells.join("");
 }
