@@ -405,6 +405,11 @@ h1 {
   font-weight: 700;
   color: #fff;
 }
+.assignee-badge.unassigned {
+  background: var(--surface-2);
+  border: 1px dashed var(--ink-faint);
+  color: var(--ink-faint);
+}
 .cat-tag {
   display: inline-flex;
   align-items: center;

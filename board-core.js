@@ -249,7 +249,10 @@ export function tasksFor(status) {
 
 export function visibleTasksFor(status, extraFilterFn) {
   var list = tasksFor(status);
-  if (activeAssigneeTab !== "all") list = list.filter(function (t) { return t.assignee === activeAssigneeTab; });
+  // Tasks created before assignees existed (or never assigned) have no `assignee` - keep them
+  // visible on every person's tab rather than hiding them anywhere but 전체 보기, so old data
+  // never silently disappears. They show a "미지정" badge (see cardHtml) as a nudge to assign.
+  if (activeAssigneeTab !== "all") list = list.filter(function (t) { return !t.assignee || t.assignee === activeAssigneeTab; });
   if (activeFilters.size > 0) list = list.filter(function (t) { return activeFilters.has(t.category); });
   if (extraFilterFn) list = list.filter(extraFilterFn);
   return list;
@@ -499,7 +502,9 @@ export function cardHtml(t, opts) {
     '<div class="card-handle"' + (draggableHandle ? ' draggable="true" title="잡아서 이동"' : "") + '>' +
     '<div class="row1">' +
     '<div class="row1-left">' +
-    (assignee ? '<span class="assignee-badge" style="background:' + assignee.color + '" title="' + escapeHtml(assignee.label) + '">' + escapeHtml(assignee.label[0]) + "</span>" : "") +
+    (assignee
+      ? '<span class="assignee-badge" style="background:' + assignee.color + '" title="' + escapeHtml(assignee.label) + '">' + escapeHtml(assignee.label[0]) + "</span>"
+      : '<span class="assignee-badge unassigned" title="담당자 미지정 - 수정에서 지정해주세요">?</span>') +
     '<span class="cat-tag">' + (cat ? '<span class="dot" style="background:' + cat.color + '"></span><span>' + escapeHtml(cat.label) + "</span>" : "") + "</span>" +
     "</div>" +
     (t.date ? '<span class="date-badge mono' + (overdue ? " overdue" : "") + '">' + formatDate(t.date) + "</span>" : "") +
