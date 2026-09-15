@@ -1146,10 +1146,19 @@ function downloadViaAnchor(filename, text, mime) {
 // ---------- CSV export (for reviewing/organizing in Excel, not for round-tripping back in -
 // the JSON backup above is the one "불러오기" understands) ----------
 
-function csvEscape(v) {
-  var s = String(v == null ? "" : v);
-  if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
-  return s;
+// Excel's CSV-open (not the "Import Text" wizard, just double-clicking the file) always
+// auto-guesses each cell's type from its raw text - there's no CSV syntax to opt a column out
+// of that. Two guesses go wrong for us: "3/5" reads as a date (March 5), and a value starting
+// with = + - or @ reads as the start of a formula, which then fails with #NAME? because it
+// isn't actually one. The fix that actually works is to make Excel evaluate a formula on
+// purpose: ="literal text" always displays exactly that text, verbatim, immune to both. Only
+// values that would otherwise be misread get wrapped - plain text passes through untouched.
+function csvField(value, forceText) {
+  var s = String(value == null ? "" : value);
+  var risky = forceText && s !== "" && (/^[=+\-@]/.test(s) || /^\d{1,4}[/.-]\d{1,2}([/.-]\d{1,4})?$/.test(s));
+  var content = risky ? '="' + s.replace(/"/g, '""') + '"' : s;
+  if (/[",\n\r]/.test(content)) content = '"' + content.replace(/"/g, '""') + '"';
+  return content;
 }
 
 function subtaskProgressText(t) {
@@ -1165,7 +1174,9 @@ function subtaskListText(t) {
 }
 
 export function exportCsv() {
-  var rows = [["상태", "담당자", "카테고리", "제목", "날짜", "진행률", "하위 항목", "비고"]];
+  // [value, forceText] per column - 날짜만 진짜 날짜로 남겨서 엑셀에서 정렬/필터가 되게 둔다.
+  var header = ["상태", "담당자", "카테고리", "제목", "날짜", "진행률", "하위 항목", "비고"];
+  var rows = [header.map(function (h) { return csvField(h, false); }).join(",")];
   var tasks = [];
   STATUSES.forEach(function (s) {
     visibleTasksFor(s.id).forEach(function (t) { tasks.push(t); });
@@ -1174,18 +1185,19 @@ export function exportCsv() {
     var statusInfo = STATUSES.find(function (s) { return s.id === t.status; });
     var a = assigneeById(t.assignee);
     var cat = categoryById(t.category);
-    rows.push([
-      statusInfo ? statusInfo.label : t.status,
-      a ? a.label : "미지정",
-      cat ? cat.label : "",
-      t.title,
-      t.date || "",
-      subtaskProgressText(t),
-      subtaskListText(t),
-      t.notes || ""
-    ]);
+    var cells = [
+      csvField(statusInfo ? statusInfo.label : t.status, false),
+      csvField(a ? a.label : "미지정", true),
+      csvField(cat ? cat.label : "", true),
+      csvField(t.title, true),
+      csvField(t.date || "", false),
+      csvField(subtaskProgressText(t), true),
+      csvField(subtaskListText(t), true),
+      csvField(t.notes || "", true)
+    ];
+    rows.push(cells.join(","));
   });
-  var csv = rows.map(function (r) { return r.map(csvEscape).join(","); }).join("\r\n");
+  var csv = rows.join("\r\n");
   var filename = "업무보드-" + todayISO() + ".csv";
   try {
     // Leading BOM so Excel (Korean Windows especially) reads this as UTF-8 instead of
