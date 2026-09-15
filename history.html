@@ -59,10 +59,14 @@
 
   <div class="catpanel" id="syncPanel" hidden>
     <h2>기기 간 동기화</h2>
-    <p class="sync-desc">이 코드를 다른 기기(폰, 다른 PC 등)에서도 "동기화" 패널을 열어 똑같이 입력하면, 두 기기의 업무 데이터가 실시간으로 합쳐집니다. 코드를 아는 사람만 이 보드에 접근할 수 있으니 잘 보관하세요.</p>
+    <p class="sync-desc"><strong>가장 쉬운 방법 -</strong> 아래 "초대 링크 복사"를 눌러 카톡 등으로 보내면, 받은 사람이 그 링크를 열기만 해도 자동으로 같은 보드에 연결됩니다. 직접 코드를 옮겨 적을 필요가 없어서 오타 걱정이 없습니다. 링크를 아는 사람만 이 보드에 접근할 수 있으니 아무 데나 공유하지 마세요.</p>
+    <div class="synccode-row">
+      <button type="button" class="addcatbtn" id="copyInviteLink">초대 링크 복사</button>
+    </div>
+    <p class="sync-desc">코드를 직접 입력해서 연결할 수도 있습니다 (오타에 주의하세요):</p>
     <div class="synccode-row">
       <span class="mono synccode" id="syncCodeDisplay"></span>
-      <button type="button" class="iconbtn" id="copySyncCode">복사</button>
+      <button type="button" class="iconbtn" id="copySyncCode">코드만 복사</button>
     </div>
     <div class="catadd">
       <input type="text" id="pairCodeInput" placeholder="다른 기기의 코드 붙여넣기" />

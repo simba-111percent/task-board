@@ -161,11 +161,25 @@ function genSyncCode() {
   return (Date.now().toString(16) + Math.random().toString(16).slice(2)).slice(0, 16);
 }
 
-export var syncCode = localStorage.getItem(SYNC_CODE_KEY);
-if (!syncCode) {
-  syncCode = genSyncCode();
-  localStorage.setItem(SYNC_CODE_KEY, syncCode);
+// If this page was opened via an invite link (?code=...), that code wins over whatever this
+// browser already had - pasting a bare code by hand is where the 3-person rollout actually went
+// wrong (easy to mistype or partially copy), so a clickable link is the reliable path now.
+function codeFromUrl() {
+  try {
+    var params = new URLSearchParams(window.location.search);
+    var code = params.get("code");
+    if (!code) return null;
+    var url = new URL(window.location.href);
+    url.searchParams.delete("code");
+    window.history.replaceState(null, "", url.toString());
+    return code;
+  } catch (e) {
+    return null;
+  }
 }
+
+export var syncCode = codeFromUrl() || localStorage.getItem(SYNC_CODE_KEY) || genSyncCode();
+localStorage.setItem(SYNC_CODE_KEY, syncCode);
 
 var unsubscribeSync = null;
 var cloudSyncTimer = null;
@@ -1023,6 +1037,10 @@ export function importBackupFile(file) {
 
 // ---------- sync panel (shared markup on both pages) ----------
 
+export function inviteLinkUrl() {
+  return new URL("index.html?code=" + encodeURIComponent(syncCode), window.location.href).toString();
+}
+
 export function wireSyncPanelUI() {
   var display = document.getElementById("syncCodeDisplay");
   if (display) display.textContent = syncCode;
@@ -1031,6 +1049,16 @@ export function wireSyncPanelUI() {
     toggleBtn.addEventListener("click", function () {
       var panel = document.getElementById("syncPanel");
       if (panel) panel.hidden = !panel.hidden;
+    });
+  }
+  var copyLinkBtn = document.getElementById("copyInviteLink");
+  if (copyLinkBtn) {
+    copyLinkBtn.addEventListener("click", function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(inviteLinkUrl())
+          .then(function () { showStatus("초대 링크를 복사했습니다 - 카톡 등으로 보내주세요"); })
+          .catch(function () { showStatus("복사에 실패했습니다"); });
+      }
     });
   }
   var copyBtn = document.getElementById("copySyncCode");
