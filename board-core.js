@@ -1170,7 +1170,7 @@ function subtaskProgressText(t) {
 
 function subtaskListText(t) {
   var subs = Array.isArray(t.subtasks) ? t.subtasks : [];
-  return subs.map(function (s) { return (s.done ? "완료: " : "미완료: ") + s.text; }).join(" / ");
+  return subs.map(function (s) { return (s.done ? "완료: " : "미완료: ") + s.text; }).join("\n");
 }
 
 export function exportCsv() {
