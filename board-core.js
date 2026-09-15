@@ -1131,8 +1131,8 @@ export function wireCategoryPanel(panelEl, rerender) {
 
 // ---------- backup export/import ----------
 
-function downloadViaAnchor(filename, text) {
-  var blob = new Blob([text], { type: "application/json" });
+function downloadViaAnchor(filename, text, mime) {
+  var blob = new Blob([text], { type: mime || "application/json" });
   var url = URL.createObjectURL(blob);
   var a = document.createElement("a");
   a.href = url;
@@ -1141,6 +1141,60 @@ function downloadViaAnchor(filename, text) {
   a.click();
   document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+// ---------- CSV export (for reviewing/organizing in Excel, not for round-tripping back in -
+// the JSON backup above is the one "불러오기" understands) ----------
+
+function csvEscape(v) {
+  var s = String(v == null ? "" : v);
+  if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function subtaskProgressText(t) {
+  var subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+  if (!subs.length) return "";
+  var done = subs.filter(function (s) { return s.done; }).length;
+  return done + "/" + subs.length;
+}
+
+function subtaskListText(t) {
+  var subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+  return subs.map(function (s) { return (s.done ? "완료: " : "미완료: ") + s.text; }).join(" / ");
+}
+
+export function exportCsv() {
+  var rows = [["상태", "담당자", "카테고리", "제목", "날짜", "진행률", "하위 항목", "비고"]];
+  var tasks = [];
+  STATUSES.forEach(function (s) {
+    visibleTasksFor(s.id).forEach(function (t) { tasks.push(t); });
+  });
+  tasks.forEach(function (t) {
+    var statusInfo = STATUSES.find(function (s) { return s.id === t.status; });
+    var a = assigneeById(t.assignee);
+    var cat = categoryById(t.category);
+    rows.push([
+      statusInfo ? statusInfo.label : t.status,
+      a ? a.label : "미지정",
+      cat ? cat.label : "",
+      t.title,
+      t.date || "",
+      subtaskProgressText(t),
+      subtaskListText(t),
+      t.notes || ""
+    ]);
+  });
+  var csv = rows.map(function (r) { return r.map(csvEscape).join(","); }).join("\r\n");
+  var filename = "업무보드-" + todayISO() + ".csv";
+  try {
+    // Leading BOM so Excel (Korean Windows especially) reads this as UTF-8 instead of
+    // mangling every non-ASCII character - a very common CSV-from-JS gotcha.
+    downloadViaAnchor(filename, "﻿" + csv, "text/csv;charset=utf-8");
+    showStatus(tasks.length + "개 업무를 CSV로 내려받았습니다");
+  } catch (e) {
+    showStatus("CSV 저장에 실패했습니다");
+  }
 }
 
 export function exportBackup() {
@@ -1230,6 +1284,8 @@ export function wireSyncPanelUI() {
 export function wireBackupButtons() {
   var exportBtn = document.getElementById("exportBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportBackup);
+  var csvBtn = document.getElementById("exportCsvBtn");
+  if (csvBtn) csvBtn.addEventListener("click", exportCsv);
   var importBtn = document.getElementById("importBtn");
   var importFile = document.getElementById("importFile");
   if (importBtn && importFile) {
