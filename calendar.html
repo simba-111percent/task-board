@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>캘린더 · 총무 업무 보드</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><text y=%2220%22 font-size=%2220%22>🗂️</text></svg>" />
+<link rel="stylesheet" href="board.css" />
+</head>
+<body>
+
+<div class="shell">
+  <header class="top">
+    <div>
+      <p class="eyebrow">캘린더</p>
+      <h1>날짜별 업무</h1>
+    </div>
+    <div class="headright">
+      <div class="counts mono" id="counts"></div>
+      <div class="navlinks-row">
+        <a class="navlink" href="index.html">← 보드로 돌아가기</a>
+        <a class="navlink" href="history.html">완료 내역 보기 →</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="tabbar-row">
+    <nav class="tabbar" id="tabBar"></nav>
+    <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+  </div>
+
+  <div class="catpanel" id="identityPanel" hidden>
+    <h2>이 기기 사용자</h2>
+    <p class="sync-desc">이 브라우저(기기)에서 열 때 "내 업무" 탭에 기본으로 누구 업무가 보일지 정합니다. 기기마다 따로 저장되니 각자 본인 기기에서 본인 이름으로 설정해주세요.</p>
+    <div class="identity-choices" id="identityChoices"></div>
+  </div>
+
+  <div class="toolrow" id="filterRow"></div>
+
+  <div class="catpanel" id="catPanel" hidden>
+    <h2>카테고리 관리</h2>
+    <div id="catList"></div>
+    <div class="catadd">
+      <input type="color" id="newCatColor" value="#5b7185" aria-label="새 카테고리 색상" />
+      <input type="text" id="newCatLabel" placeholder="새 카테고리 이름" maxlength="16" />
+      <button class="addcatbtn" id="addCatBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        추가
+      </button>
+    </div>
+  </div>
+
+  <nav class="cal-nav">
+    <div class="cal-navbtns">
+      <button type="button" id="calPrev" title="이전 달">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <button type="button" class="today-btn" id="calToday">오늘</button>
+      <button type="button" id="calNext" title="다음 달">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+    <h2 id="calLabel"></h2>
+    <div class="cal-navbtns" style="visibility:hidden"><button type="button">&nbsp;</button></div>
+  </nav>
+
+  <div class="cal-weekdays">
+    <span class="cal-weekday">일</span><span class="cal-weekday">월</span><span class="cal-weekday">화</span>
+    <span class="cal-weekday">수</span><span class="cal-weekday">목</span><span class="cal-weekday">금</span>
+    <span class="cal-weekday">토</span>
+  </div>
+  <div class="cal-grid" id="calGrid"></div>
+
+  <section id="daySection">
+    <div class="daydetail-head">
+      <h3 id="dayDetailHeading">날짜를 클릭해보세요</h3>
+      <button type="button" class="addbtn" id="dayAddBtn" data-open-add data-open-add-status="todo" title="이 날짜로 새 업무 추가">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="daydetail-list" id="dayDetail"></div>
+  </section>
+
+  <div class="catpanel" id="syncPanel" hidden>
+    <h2>기기 간 동기화</h2>
+    <p class="sync-desc">이 코드를 다른 기기(폰, 다른 PC 등)에서도 "동기화" 패널을 열어 똑같이 입력하면, 두 기기의 업무 데이터가 실시간으로 합쳐집니다. 코드를 아는 사람만 이 보드에 접근할 수 있으니 잘 보관하세요.</p>
+    <div class="synccode-row">
+      <span class="mono synccode" id="syncCodeDisplay"></span>
+      <button type="button" class="iconbtn" id="copySyncCode">복사</button>
+    </div>
+    <div class="catadd">
+      <input type="text" id="pairCodeInput" placeholder="다른 기기의 코드 붙여넣기" />
+      <button class="addcatbtn" id="pairCodeBtn" type="button">연결</button>
+    </div>
+  </div>
+
+  <footer class="bottom">
+    <span id="statusMsg" class="status-msg" aria-live="polite"></span>
+    <div class="actions">
+      <span class="sync-status mono" id="syncStatus">동기화 준비 중…</span>
+      <button class="iconbtn" id="toggleSyncPanel" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+        동기화
+      </button>
+      <button class="iconbtn" id="exportBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+        백업 저장
+      </button>
+      <button class="iconbtn" id="importBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="M7 14l5-5 5 5"/><path d="M4 4h16"/></svg>
+        불러오기
+      </button>
+      <input type="file" id="importFile" accept="application/json" hidden />
+    </div>
+  </footer>
+</div>
+
+<script type="module">
+import * as Core from "./board-core.js";
+
+var today = new Date();
+var viewYear = today.getFullYear();
+var viewMonth = today.getMonth(); // 0-based
+var selectedDate = Core.todayISO();
+
+function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function isoOf(y, m, d) { return y + "-" + pad2(m + 1) + "-" + pad2(d); }
+
+function render() {
+  renderTabs();
+  renderCounts();
+  renderFilterRow();
+  renderCategoryPanel();
+  renderCalendar();
+  renderDayDetail();
+}
+
+function renderTabs() {
+  document.getElementById("tabBar").innerHTML = Core.tabsHtml();
+  document.getElementById("toggleIdentityPanel").textContent = Core.identityLabelHtml();
+  document.getElementById("identityChoices").innerHTML = Core.identityChoicesHtml();
+}
+
+function renderCounts() {
+  document.getElementById("counts").innerHTML = "<span><b>" + Core.visibleDatedTasks().length + "</b>날짜 지정된 업무</span>";
+}
+
+function renderFilterRow() {
+  document.getElementById("filterRow").innerHTML = Core.filterRowHtml(true);
+}
+
+function renderCategoryPanel() {
+  document.getElementById("catList").innerHTML = Core.categoryPanelListHtml();
+}
+
+function pillHtml(t) {
+  var cat = Core.categoryById(t.category);
+  var color = cat ? cat.color : "var(--ink-faint)";
+  var overdue = t.status !== "done" && t.date < Core.todayISO();
+  var cls = "cal-pill" + (t.status === "done" ? " done" : "") + (overdue ? " overdue" : "");
+  return '<div class="' + cls + '" style="--pill-color:' + color + '">' + Core.escapeHtml(t.title) + "</div>";
+}
+
+function renderCalendar() {
+  document.getElementById("calLabel").textContent = viewYear + "년 " + (viewMonth + 1) + "월";
+
+  var byDate = {};
+  Core.visibleDatedTasks().forEach(function (t) {
+    (byDate[t.date] = byDate[t.date] || []).push(t);
+  });
+
+  var firstWeekday = new Date(viewYear, viewMonth, 1).getDay();
+  var daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  var todayIso = Core.todayISO();
+
+  var cells = [];
+  for (var i = 0; i < firstWeekday; i++) cells.push('<div class="cal-cell empty"></div>');
+  for (var d = 1; d <= daysInMonth; d++) {
+    var dateStr = isoOf(viewYear, viewMonth, d);
+    var dayTasks = byDate[dateStr] || [];
+    var shown = dayTasks.slice(0, 3).map(pillHtml).join("");
+    var more = dayTasks.length > 3 ? '<div class="cal-more">+' + (dayTasks.length - 3) + "건</div>" : "";
+    var cls = "cal-cell" + (dateStr === todayIso ? " today" : "") + (dateStr === selectedDate ? " selected" : "");
+    cells.push(
+      '<button type="button" class="' + cls + '" data-date="' + dateStr + '">' +
+      '<span class="cal-daynum">' + d + "</span>" +
+      '<div class="cal-pills">' + shown + more + "</div>" +
+      "</button>"
+    );
+  }
+  var total = firstWeekday + daysInMonth;
+  var trailing = (7 - (total % 7)) % 7;
+  for (var j = 0; j < trailing; j++) cells.push('<div class="cal-cell empty"></div>');
+
+  document.getElementById("calGrid").innerHTML = cells.join("");
+}
+
+function renderDayDetail() {
+  var heading = document.getElementById("dayDetailHeading");
+  var panel = document.getElementById("dayDetail");
+  var addBtn = document.getElementById("dayAddBtn");
+  addBtn.dataset.openAddDate = selectedDate;
+
+  var tasks = Core.visibleDatedTasks().filter(function (t) { return t.date === selectedDate; });
+  heading.textContent = Core.formatDate(selectedDate) + " · " + tasks.length + "건";
+
+  var addForm = Core.isAddOpenFor("todo") ? Core.formHtml(null, "todo") : "";
+  var cardsHtml = tasks.map(function (t) { return Core.cardOrFormHtml(t); }).join("");
+
+  panel.innerHTML = addForm + (cardsHtml ? cardsHtml : (!addForm ? '<div class="empty">이 날짜에 등록된 업무가 없습니다</div>' : ""));
+}
+
+Core.initAssigneeTab();
+Core.setRenderCallback(render);
+Core.wireStatusMessage();
+
+Core.wireCardEvents(document.getElementById("daySection"));
+Core.wireTabs(document.getElementById("tabBar"), render);
+Core.wireIdentityToggle();
+Core.wireIdentityPanel(document.getElementById("identityPanel"), render);
+Core.wireFilterRow(document.getElementById("filterRow"), render);
+Core.wireCategoryPanel(document.getElementById("catPanel"), render);
+Core.wireSyncPanelUI();
+Core.wireBackupButtons();
+Core.setSyncStatusCallback(function (text, cls) {
+  var el = document.getElementById("syncStatus");
+  el.textContent = text;
+  el.className = "sync-status mono" + (cls ? " " + cls : "");
+});
+
+document.getElementById("calGrid").addEventListener("click", function (e) {
+  var cell = e.target.closest("[data-date]");
+  if (!cell) return;
+  selectedDate = cell.dataset.date;
+  renderCalendar();
+  renderDayDetail();
+});
+
+document.getElementById("calPrev").addEventListener("click", function () {
+  viewMonth -= 1;
+  if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; }
+  renderCalendar();
+});
+document.getElementById("calNext").addEventListener("click", function () {
+  viewMonth += 1;
+  if (viewMonth > 11) { viewMonth = 0; viewYear += 1; }
+  renderCalendar();
+});
+document.getElementById("calToday").addEventListener("click", function () {
+  var now = new Date();
+  viewYear = now.getFullYear();
+  viewMonth = now.getMonth();
+  selectedDate = Core.todayISO();
+  renderCalendar();
+  renderDayDetail();
+});
+
+render();
+if (!Core.getMyAssignee()) document.getElementById("identityPanel").hidden = false;
+Core.subscribeSync();
+</script>
+</body>
+</html>

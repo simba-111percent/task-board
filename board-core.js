@@ -258,6 +258,18 @@ export function visibleTasksFor(status, extraFilterFn) {
   return list;
 }
 
+// All tasks that have a date set, across every status (todo/doing/done) - for the calendar
+// view, which cares about "when" rather than "what column". Same assignee/category filter
+// rules as visibleTasksFor.
+export function visibleDatedTasks() {
+  return state.tasks.filter(function (t) {
+    if (!t.date) return false;
+    if (activeAssigneeTab !== "all" && t.assignee && t.assignee !== activeAssigneeTab) return false;
+    if (activeFilters.size > 0 && !activeFilters.has(t.category)) return false;
+    return true;
+  });
+}
+
 // ---------- mutations (all persist + trigger re-render) ----------
 
 export function addTask(status, fields) {
@@ -452,7 +464,8 @@ function defaultAssignee() {
 
 export function formHtml(task, status) {
   var isEdit = !!task;
-  var t = task || { title: "", category: state.categories[0].id, assignee: defaultAssignee(), date: "", notes: "" };
+  var prefillDate = (!isEdit && openForm && openForm.mode === "add" && openForm.date) || "";
+  var t = task || { title: "", category: state.categories[0].id, assignee: defaultAssignee(), date: prefillDate, notes: "" };
   return '<div class="form" data-form="' + (isEdit ? "edit" : "add") + '" data-target="' + (isEdit ? task.id : status) + '">' +
     '<input type="text" data-f-title placeholder="업무 내용" maxlength="120" value="' + escapeHtml(t.title) + '" />' +
     '<div class="form-row">' +
@@ -607,7 +620,9 @@ export function wireCardEvents(rootEl) {
     var addBtn = e.target.closest("[data-open-add]");
     if (addBtn) {
       var col = addBtn.closest(".column");
-      openForm = { mode: "add", status: col ? col.dataset.status : "todo" };
+      var status = addBtn.dataset.openAddStatus || (col ? col.dataset.status : "todo");
+      openForm = { mode: "add", status: status };
+      if (addBtn.dataset.openAddDate) openForm.date = addBtn.dataset.openAddDate;
       notifyRender();
       focusFirstInput();
       return;
