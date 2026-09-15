@@ -80,6 +80,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body {
   margin: 0;
   background: var(--paper);
@@ -195,6 +196,7 @@ h1 {
   border-bottom: 1px solid var(--line);
 }
 .tabbar { display: flex; gap: 2px; flex-wrap: wrap; }
+.tabbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tab {
   padding: 9px 16px;
   font-size: 13.5px;

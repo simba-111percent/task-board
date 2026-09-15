@@ -406,6 +406,22 @@ export function deleteCategory(id) {
   persist();
 }
 
+// One-off cleanup for tasks that predate the assignee feature (or were never assigned).
+// Only touches status === "done" tasks with no assignee - deliberately scoped, not a
+// general "assign everything to me" tool.
+export function bulkAssignUnassignedDone(id) {
+  var count = 0;
+  state.tasks.forEach(function (t) {
+    if (t.status === "done" && !t.assignee) {
+      t.assignee = id;
+      t.updatedAt = Date.now();
+      count++;
+    }
+  });
+  if (count > 0) persist();
+  return count;
+}
+
 export function importState(parsed) {
   if (!parsed || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.categories)) return false;
   state.categories = parsed.categories;

@@ -23,7 +23,10 @@
 
   <div class="tabbar-row">
     <nav class="tabbar" id="tabBar"></nav>
-    <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+    <div class="tabbar-actions">
+      <button type="button" class="iconbtn" id="bulkAssignBtn" hidden>미지정 완료 항목 전부 나에게</button>
+      <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+    </div>
   </div>
 
   <div class="catpanel" id="identityPanel" hidden>
@@ -102,7 +105,34 @@ function renderTabs() {
   document.getElementById("tabBar").innerHTML = Core.tabsHtml();
   document.getElementById("toggleIdentityPanel").textContent = Core.identityLabelHtml();
   document.getElementById("identityChoices").innerHTML = Core.identityChoicesHtml();
+  updateBulkAssignVisibility();
 }
+
+var bulkConfirmPending = false;
+var bulkAssignBtn = document.getElementById("bulkAssignBtn");
+var BULK_ASSIGN_LABEL = "미지정 완료 항목 전부 나에게";
+
+function updateBulkAssignVisibility() {
+  var mine = Core.getMyAssignee();
+  var hasUnassignedDone = Core.tasksFor("done").some(function (t) { return !t.assignee; });
+  bulkAssignBtn.hidden = !(mine && hasUnassignedDone);
+  if (bulkAssignBtn.hidden) bulkConfirmPending = false;
+}
+
+bulkAssignBtn.addEventListener("click", function () {
+  if (!bulkConfirmPending) {
+    bulkConfirmPending = true;
+    bulkAssignBtn.textContent = "정말 전부 나에게 지정할까요? (다시 클릭)";
+    setTimeout(function () {
+      if (bulkConfirmPending) { bulkConfirmPending = false; bulkAssignBtn.textContent = BULK_ASSIGN_LABEL; }
+    }, 4000);
+    return;
+  }
+  bulkConfirmPending = false;
+  bulkAssignBtn.textContent = BULK_ASSIGN_LABEL;
+  var n = Core.bulkAssignUnassignedDone(Core.getMyAssignee());
+  Core.showStatus(n + "건을 나에게 지정했습니다");
+});
 
 function renderCounts() {
   var el = document.getElementById("counts");
