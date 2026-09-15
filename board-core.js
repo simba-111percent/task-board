@@ -24,6 +24,14 @@ export const DEFAULT_CATEGORIES = [
   { id: "cat-etc", label: "기타", color: "#8c8676" }
 ];
 
+// Fixed 3-person roster (총무팀). Not user-editable from the UI on purpose - keeps the
+// per-person tab list stable and short. Update here if the team roster changes.
+export const ASSIGNEES = [
+  { id: "simba", label: "심바", color: "#5b7185" },
+  { id: "sion", label: "시온", color: "#b0793a" },
+  { id: "dante", label: "단테", color: "#4f7d6b" }
+];
+
 export const ICONS = {
   left: '<path d="M15 6l-6 6 6 6"/>',
   right: '<path d="M9 6l6 6-6 6"/>',
@@ -82,6 +90,31 @@ function loadState() {
 
 export var state = loadState();
 export var activeFilters = new Set();
+
+// ---------- per-device identity + assignee tab ----------
+// "Which of the 3 people is this browser/device?" - stored locally so the board defaults to
+// that person's own tab. Not an auth system; anyone can switch it, it's just a convenience so
+// each of the 3 lands on their own view instead of the shared "전체 보기" every time.
+
+var MY_ASSIGNEE_KEY = "ops-board-my-assignee";
+
+export function assigneeById(id) {
+  return ASSIGNEES.find(function (a) { return a.id === id; }) || null;
+}
+
+export function getMyAssignee() {
+  return localStorage.getItem(MY_ASSIGNEE_KEY);
+}
+
+export function setMyAssignee(id) {
+  localStorage.setItem(MY_ASSIGNEE_KEY, id);
+}
+
+export var activeAssigneeTab = "all"; // "all" | assignee id
+
+export function initAssigneeTab() {
+  activeAssigneeTab = getMyAssignee() || "all";
+}
 
 var draggedId = null;
 var draggedSubtask = null; // { taskId, subtaskId }
@@ -216,6 +249,7 @@ export function tasksFor(status) {
 
 export function visibleTasksFor(status, extraFilterFn) {
   var list = tasksFor(status);
+  if (activeAssigneeTab !== "all") list = list.filter(function (t) { return t.assignee === activeAssigneeTab; });
   if (activeFilters.size > 0) list = list.filter(function (t) { return activeFilters.has(t.category); });
   if (extraFilterFn) list = list.filter(extraFilterFn);
   return list;
@@ -230,6 +264,7 @@ export function addTask(status, fields) {
     id: uid(),
     title: fields.title,
     category: fields.category,
+    assignee: fields.assignee || getMyAssignee() || ASSIGNEES[0].id,
     date: fields.date || "",
     notes: fields.notes || "",
     status: status,
@@ -245,6 +280,7 @@ export function updateTask(id, fields) {
   if (!t) return;
   t.title = fields.title;
   t.category = fields.category;
+  t.assignee = fields.assignee || t.assignee;
   t.date = fields.date || "";
   t.notes = fields.notes || "";
   t.updatedAt = Date.now();
@@ -384,13 +420,27 @@ export function categoryOptions(selectedId) {
   }).join("");
 }
 
+export function assigneeOptions(selectedId) {
+  return ASSIGNEES.map(function (a) {
+    return '<option value="' + a.id + '"' + (a.id === selectedId ? " selected" : "") + ">" + escapeHtml(a.label) + "</option>";
+  }).join("");
+}
+
+function defaultAssignee() {
+  if (activeAssigneeTab !== "all") return activeAssigneeTab;
+  return getMyAssignee() || ASSIGNEES[0].id;
+}
+
 export function formHtml(task, status) {
   var isEdit = !!task;
-  var t = task || { title: "", category: state.categories[0].id, date: "", notes: "" };
+  var t = task || { title: "", category: state.categories[0].id, assignee: defaultAssignee(), date: "", notes: "" };
   return '<div class="form" data-form="' + (isEdit ? "edit" : "add") + '" data-target="' + (isEdit ? task.id : status) + '">' +
     '<input type="text" data-f-title placeholder="업무 내용" maxlength="120" value="' + escapeHtml(t.title) + '" />' +
     '<div class="form-row">' +
     '<select data-f-category>' + categoryOptions(t.category) + "</select>" +
+    '<select data-f-assignee>' + assigneeOptions(t.assignee) + "</select>" +
+    "</div>" +
+    '<div class="form-row">' +
     '<input type="date" data-f-date value="' + (t.date || "") + '" />' +
     "</div>" +
     '<textarea data-f-notes placeholder="비고 (선택)" maxlength="400">' + escapeHtml(t.notes) + "</textarea>" +
@@ -421,6 +471,7 @@ export function cardHtml(t, opts) {
   opts = opts || {};
   var draggableHandle = opts.draggableHandle !== false;
   var cat = categoryById(t.category);
+  var assignee = assigneeById(t.assignee);
   var overdue = t.date && t.status !== "done" && t.date < todayISO();
   var idx = STATUSES.findIndex(function (s) { return s.id === t.status; });
   var delConfirm = pendingDeleteId === t.id;
@@ -447,7 +498,10 @@ export function cardHtml(t, opts) {
   return '<div class="card" data-card-id="' + t.id + '"' + catStyle + ">" +
     '<div class="card-handle"' + (draggableHandle ? ' draggable="true" title="잡아서 이동"' : "") + '>' +
     '<div class="row1">' +
+    '<div class="row1-left">' +
+    (assignee ? '<span class="assignee-badge" style="background:' + assignee.color + '" title="' + escapeHtml(assignee.label) + '">' + escapeHtml(assignee.label[0]) + "</span>" : "") +
     '<span class="cat-tag">' + (cat ? '<span class="dot" style="background:' + cat.color + '"></span><span>' + escapeHtml(cat.label) + "</span>" : "") + "</span>" +
+    "</div>" +
     (t.date ? '<span class="date-badge mono' + (overdue ? " overdue" : "") + '">' + formatDate(t.date) + "</span>" : "") +
     "</div>" +
     '<div class="title" data-open-edit>' + escapeHtml(t.title) + "</div>" +
@@ -510,6 +564,7 @@ export function wireCardEvents(rootEl) {
     return {
       title: formEl.querySelector("[data-f-title]").value.trim(),
       category: formEl.querySelector("[data-f-category]").value,
+      assignee: formEl.querySelector("[data-f-assignee]").value,
       date: formEl.querySelector("[data-f-date]").value,
       notes: formEl.querySelector("[data-f-notes]").value.trim()
     };
@@ -751,6 +806,66 @@ export function wireCardEvents(rootEl) {
     }
     dropTask(draggedId, status, dropIndex);
     draggedId = null;
+  });
+}
+
+// ---------- assignee tab bar + identity panel (shared markup on both pages) ----------
+// Order: "my" tab first (labeled 내 업무 once identity is set), then teammates, then 전체 보기.
+
+export function tabsHtml() {
+  var mine = getMyAssignee();
+  var order = mine
+    ? [mine].concat(ASSIGNEES.filter(function (a) { return a.id !== mine; }).map(function (a) { return a.id; }))
+    : ASSIGNEES.map(function (a) { return a.id; });
+  var tabs = order.map(function (id) {
+    var a = assigneeById(id);
+    var label = mine && id === mine ? "내 업무" : a.label;
+    var active = activeAssigneeTab === id;
+    return '<button type="button" class="tab' + (active ? " active" : "") + '" data-tab="' + id + '" style="--tab-color:' + a.color + '">' + escapeHtml(label) + "</button>";
+  }).join("");
+  tabs += '<button type="button" class="tab' + (activeAssigneeTab === "all" ? " active" : "") + '" data-tab="all">전체 보기</button>';
+  return tabs;
+}
+
+export function wireTabs(tabsEl, rerender) {
+  tabsEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-tab]");
+    if (!btn) return;
+    activeAssigneeTab = btn.dataset.tab;
+    rerender();
+  });
+}
+
+export function identityLabelHtml() {
+  var mine = getMyAssignee();
+  var a = mine ? assigneeById(mine) : null;
+  return a ? "나: " + escapeHtml(a.label) + " · 변경" : "이 기기 사용자 설정";
+}
+
+export function identityChoicesHtml() {
+  var mine = getMyAssignee();
+  return ASSIGNEES.map(function (a) {
+    return '<button type="button" class="identity-choice" data-set-identity="' + a.id + '" style="--tab-color:' + a.color + '" aria-pressed="' + (a.id === mine) + '">' + escapeHtml(a.label) + "</button>";
+  }).join("");
+}
+
+export function wireIdentityPanel(panelEl, rerender) {
+  panelEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-set-identity]");
+    if (!btn) return;
+    setMyAssignee(btn.dataset.setIdentity);
+    activeAssigneeTab = btn.dataset.setIdentity;
+    panelEl.hidden = true;
+    rerender();
+  });
+}
+
+export function wireIdentityToggle() {
+  var btn = document.getElementById("toggleIdentityPanel");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    var panel = document.getElementById("identityPanel");
+    if (panel) panel.hidden = !panel.hidden;
   });
 }
 

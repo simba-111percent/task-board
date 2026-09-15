@@ -21,6 +21,17 @@
     </div>
   </header>
 
+  <div class="tabbar-row">
+    <nav class="tabbar" id="tabBar"></nav>
+    <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+  </div>
+
+  <div class="catpanel" id="identityPanel" hidden>
+    <h2>이 기기 사용자</h2>
+    <p class="sync-desc">이 브라우저(기기)에서 열 때 "내 업무" 탭에 기본으로 누구 업무가 보일지 정합니다. 기기마다 따로 저장되니 각자 본인 기기에서 본인 이름으로 설정해주세요.</p>
+    <div class="identity-choices" id="identityChoices"></div>
+  </div>
+
   <div class="toolrow" id="filterRow">
     <input type="text" class="searchbox" id="searchBox" placeholder="제목·비고 검색" />
   </div>
@@ -80,15 +91,22 @@ import * as Core from "./board-core.js";
 var searchTerm = "";
 
 function render() {
+  renderTabs();
   renderCounts();
   renderFilterChips();
   renderCategoryPanel();
   renderList();
 }
 
+function renderTabs() {
+  document.getElementById("tabBar").innerHTML = Core.tabsHtml();
+  document.getElementById("toggleIdentityPanel").textContent = Core.identityLabelHtml();
+  document.getElementById("identityChoices").innerHTML = Core.identityChoicesHtml();
+}
+
 function renderCounts() {
   var el = document.getElementById("counts");
-  el.innerHTML = "<span><b>" + Core.tasksFor("done").length + "</b>완료된 일</span>";
+  el.innerHTML = "<span><b>" + Core.visibleTasksFor("done", matchesSearch).length + "</b>완료된 일</span>";
 }
 
 function renderFilterChips() {
@@ -124,11 +142,15 @@ function renderList() {
   window.scrollTo(0, scrollY);
 }
 
+Core.initAssigneeTab();
 Core.setRenderCallback(render);
 Core.wireStatusMessage();
 
 var board = document.getElementById("board");
 Core.wireCardEvents(board);
+Core.wireTabs(document.getElementById("tabBar"), render);
+Core.wireIdentityToggle();
+Core.wireIdentityPanel(document.getElementById("identityPanel"), render);
 Core.wireFilterRow(document.getElementById("filterRow"), render);
 Core.wireCategoryPanel(document.getElementById("catPanel"), render);
 Core.wireSyncPanelUI();
@@ -141,10 +163,12 @@ Core.setSyncStatusCallback(function (text, cls) {
 
 document.getElementById("searchBox").addEventListener("input", function (e) {
   searchTerm = e.target.value.trim().toLowerCase();
+  renderCounts();
   renderList();
 });
 
 render();
+if (!Core.getMyAssignee()) document.getElementById("identityPanel").hidden = false;
 Core.subscribeSync();
 </script>
 </body>

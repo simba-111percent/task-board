@@ -21,6 +21,17 @@
     </div>
   </header>
 
+  <div class="tabbar-row">
+    <nav class="tabbar" id="tabBar"></nav>
+    <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+  </div>
+
+  <div class="catpanel" id="identityPanel" hidden>
+    <h2>이 기기 사용자</h2>
+    <p class="sync-desc">이 브라우저(기기)에서 열 때 "내 업무" 탭에 기본으로 누구 업무가 보일지 정합니다. 기기마다 따로 저장되니 각자 본인 기기에서 본인 이름으로 설정해주세요.</p>
+    <div class="identity-choices" id="identityChoices"></div>
+  </div>
+
   <div class="toolrow" id="filterRow"></div>
 
   <div class="catpanel" id="catPanel" hidden>
@@ -78,18 +89,25 @@ import * as Core from "./board-core.js";
 var BOARD_STATUSES = Core.STATUSES.filter(function (s) { return s.id !== "done"; }); // todo, doing only
 
 function render() {
+  renderTabs();
   renderCounts();
   renderFilterRow();
   renderCategoryPanel();
   renderBoard();
 }
 
+function renderTabs() {
+  document.getElementById("tabBar").innerHTML = Core.tabsHtml();
+  document.getElementById("toggleIdentityPanel").textContent = Core.identityLabelHtml();
+  document.getElementById("identityChoices").innerHTML = Core.identityChoicesHtml();
+}
+
 function renderCounts() {
   var el = document.getElementById("counts");
   el.innerHTML = BOARD_STATUSES.map(function (s) {
-    return "<span><b>" + Core.tasksFor(s.id).length + "</b>" + s.label + "</span>";
+    return "<span><b>" + Core.visibleTasksFor(s.id).length + "</b>" + s.label + "</span>";
   }).join("");
-  document.getElementById("historyLink").textContent = "완료 " + Core.tasksFor("done").length + "건 보기 →";
+  document.getElementById("historyLink").textContent = "완료 " + Core.visibleTasksFor("done").length + "건 보기 →";
 }
 
 function renderFilterRow() {
@@ -124,11 +142,15 @@ function renderBoard() {
   window.scrollTo(0, scrollY);
 }
 
+Core.initAssigneeTab();
 Core.setRenderCallback(render);
 Core.wireStatusMessage();
 
 var board = document.getElementById("board");
 Core.wireCardEvents(board);
+Core.wireTabs(document.getElementById("tabBar"), render);
+Core.wireIdentityToggle();
+Core.wireIdentityPanel(document.getElementById("identityPanel"), render);
 Core.wireFilterRow(document.getElementById("filterRow"), render);
 Core.wireCategoryPanel(document.getElementById("catPanel"), render);
 Core.wireSyncPanelUI();
@@ -140,6 +162,7 @@ Core.setSyncStatusCallback(function (text, cls) {
 });
 
 render();
+if (!Core.getMyAssignee()) document.getElementById("identityPanel").hidden = false;
 Core.subscribeSync();
 </script>
 </body>
