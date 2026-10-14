@@ -186,11 +186,23 @@ localStorage.setItem(SYNC_CODE_KEY, syncCode);
 
 var unsubscribeSync = null;
 var cloudSyncTimer = null;
+// Serializes pushes so two never race each other over the network: on a brand new board, the
+// very first write 404s (doc doesn't exist) and falls back to setDoc - if a second edit landed
+// moments later (its own debounced push firing while that fallback was still in flight), both
+// setDoc calls could resolve out of order, and whichever one happened to *complete* last would
+// win even if it was initiated first, silently reverting the other edit. While a push is in
+// flight, a newly-fired debounce just marks pushQueuedAgain instead of starting a second one;
+// the in-flight push kicks off the next one itself once it settles, so pushes never overlap.
+var pushInFlight = false;
+var pushQueuedAgain = false;
 
 function queueCloudPush() {
   setSyncStatus("동기화 중…", "pending");
   clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = setTimeout(pushToCloud, 500);
+  cloudSyncTimer = setTimeout(function () {
+    if (pushInFlight) { pushQueuedAgain = true; return; }
+    pushToCloud();
+  }, 500);
 }
 
 // Cloud writes are per-task field patches, not a "whole tasks array" overwrite. The old
@@ -219,6 +231,7 @@ function tasksArrayToMap(arr) {
 }
 
 function pushToCloud() {
+  pushInFlight = true;
   var ref = doc(db, "boards", syncCode);
   var dirty = dirtyTaskIds;
   var deleted = deletedTaskIds;
@@ -238,18 +251,23 @@ function pushToCloud() {
   });
   deleted.forEach(function (id) { patch["tasks." + id] = deleteField(); });
 
+  function finishPush(ok) {
+    pushInFlight = false;
+    setSyncStatus(
+      ok ? "동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "동기화 실패 (오프라인?)",
+      ok ? "ok" : "err"
+    );
+    if (pushQueuedAgain) { pushQueuedAgain = false; pushToCloud(); }
+  }
+
   updateDoc(ref, patch)
-    .then(function () {
-      setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
-    })
+    .then(function () { finishPush(true); })
     .catch(function (err) {
       // Brand new board (doc doesn't exist yet) - seed it with everything currently local.
       if (err && err.code === "not-found") {
         setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), templates: state.templates || [], savedAt: Date.now() })
-          .then(function () {
-            setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
-          })
-          .catch(function () { setSyncStatus("동기화 실패 (오프라인?)", "err"); });
+          .then(function () { finishPush(true); })
+          .catch(function () { finishPush(false); });
         return;
       }
       // Put the markers back so the next push retries this same patch.
@@ -257,7 +275,7 @@ function pushToCloud() {
       deleted.forEach(function (id) { deletedTaskIds.add(id); });
       if (catsDirty) categoriesDirty = true;
       if (tplsDirty) templatesDirty = true;
-      setSyncStatus("동기화 실패 (오프라인?)", "err");
+      finishPush(false);
     });
 }
 
@@ -308,7 +326,12 @@ function captureFocusedTextField(fieldAttrs) {
   var row = el.closest("[data-cat-id], [data-tpl-id]");
   if (!row) return null;
   var rowIdAttr = row.hasAttribute("data-cat-id") ? "data-cat-id" : "data-tpl-id";
-  return { rowIdAttr: rowIdAttr, rowId: row.getAttribute(rowIdAttr), fieldAttr: fieldAttr, selStart: el.selectionStart, selEnd: el.selectionEnd };
+  // Capture the live value too, not just where the cursor was: these fields only commit to
+  // state on blur now, so anything typed so far is *only* sitting in this DOM node - if a
+  // remote sync echo forces a re-render while the user is still mid-field, the freshly rebuilt
+  // node would otherwise come back showing the last *committed* value, silently dropping
+  // whatever they'd typed since.
+  return { rowIdAttr: rowIdAttr, rowId: row.getAttribute(rowIdAttr), fieldAttr: fieldAttr, value: el.value, selStart: el.selectionStart, selEnd: el.selectionEnd };
 }
 
 function restoreFocusedTextField(captured) {
@@ -317,9 +340,22 @@ function restoreFocusedTextField(captured) {
   if (!row) return;
   var el = row.querySelector("[" + captured.fieldAttr + "]");
   if (!el) return;
+  el.value = captured.value;
   el.focus();
   try { el.setSelectionRange(captured.selStart, captured.selEnd); } catch (e) {}
 }
+
+// Set while renderCategoryList/renderTemplateList are tearing down and rebuilding a row via
+// innerHTML. Removing a focused input/textarea from the DOM fires its own synchronous "blur"
+// (and therefore "focusout") - if that's a *different* tracked field than the one that was just
+// committed (e.g. the user tabbed from "name" into "subtasks" in the same row before the
+// debounced commit fired), the panel's own focusout listener would otherwise treat that as a
+// brand new edit to commit, re-render again to reflect it, destroy the freshly-recreated (and
+// re-focused) field again, and loop forever - which starves queueCloudPush's debounce timer of
+// the idle gap it needs to ever actually fire, so the edit never reaches Firestore at all. The
+// real edit was already captured and committed before this render started, so any focusout that
+// happens *because of* this render is a side effect to ignore, not a new edit.
+var suppressPanelFocusout = false;
 
 function applyRemoteState(data) {
   var typing = captureTypingInProgress();
@@ -1190,8 +1226,10 @@ export function renderCategoryList(containerId) {
   var container = document.getElementById(containerId);
   if (!container) return;
   var captured = captureFocusedTextField(["data-cat-label"]);
+  suppressPanelFocusout = true;
   container.innerHTML = categoryPanelListHtml();
   restoreFocusedTextField(captured);
+  suppressPanelFocusout = false;
 }
 
 // ---------- template panel (shared markup wherever a page has an "add task" entry point) ----------
@@ -1213,16 +1251,18 @@ export function renderTemplateList(containerId) {
   var container = document.getElementById(containerId);
   if (!container) return;
   var captured = captureFocusedTextField(["data-tpl-name", "data-tpl-subtasks"]);
+  suppressPanelFocusout = true;
   container.innerHTML = templatePanelListHtml();
   restoreFocusedTextField(captured);
+  suppressPanelFocusout = false;
 }
 
 export function wireTemplatePanel(panelEl) {
-  // Re-rendering on every "input" event (see renderTemplateList) isn't just a focus problem for
-  // Korean/IME typing - committing mid-composition tears down the very DOM node the IME is
-  // composing into, which cuts each jamo off on its own instead of combining into a syllable.
-  // e.isComposing (true for the input events IME composition itself fires) gates that; the
-  // compositionend listener is the fallback that actually commits once composition finishes.
+  // Committing on every "input" event re-renders the whole list (see renderTemplateList),
+  // which destroys and recreates the field being typed into - no amount of isComposing-gating
+  // fully survives that across every browser/IME combination. The robust fix is the same one
+  // the "add new template" fields already use without anyone noticing a problem: don't touch
+  // state while the user is actively typing at all, only once they leave the field.
   function commitTplField(target) {
     var row = target.closest("[data-tpl-id]");
     if (!row) return;
@@ -1230,12 +1270,14 @@ export function wireTemplatePanel(panelEl) {
     if (target.matches("[data-tpl-name]")) updateTemplate(id, { name: target.value });
     if (target.matches("[data-tpl-subtasks]")) updateTemplate(id, { subtasks: parseTemplateLines(target.value) });
   }
-  panelEl.addEventListener("input", function (e) {
-    if (e.isComposing) return;
-    commitTplField(e.target);
-  });
-  panelEl.addEventListener("compositionend", function (e) {
-    commitTplField(e.target);
+  panelEl.addEventListener("focusout", function (e) {
+    if (suppressPanelFocusout) return;
+    var target = e.target;
+    if (!target.matches("[data-tpl-name], [data-tpl-subtasks]")) return;
+    // Deferred a tick: committing synchronously here (which re-renders the list, removing this
+    // same node from the DOM) while the browser is still mid-dispatch of the blur that's
+    // *leaving* this node throws "node is no longer a child of this node" in some browsers.
+    setTimeout(function () { commitTplField(target); }, 0);
   });
   panelEl.addEventListener("click", function (e) {
     var delBtn = e.target.closest("[data-tpl-delete]");
@@ -1272,7 +1314,10 @@ export function wireFilterRow(rowEl, rerender) {
 }
 
 export function wireCategoryPanel(panelEl, rerender) {
-  // See the matching note in wireTemplatePanel - same IME-composition guard, same reason.
+  // See the matching note in wireTemplatePanel. The color swatch is the one field where
+  // instant-per-keystroke feedback is actually worth having (watching the color live as you
+  // drag the picker) and color inputs don't have IME composition to break, so it stays on
+  // "input"; the label text field commits on blur instead, same as everywhere else now.
   function commitCatField(target) {
     var row = target.closest("[data-cat-id]");
     if (!row) return;
@@ -1281,11 +1326,13 @@ export function wireCategoryPanel(panelEl, rerender) {
     if (target.matches("[data-cat-color]")) updateCategory(id, { color: target.value });
   }
   panelEl.addEventListener("input", function (e) {
-    if (e.isComposing) return;
-    commitCatField(e.target);
+    if (e.target.matches("[data-cat-color]")) commitCatField(e.target);
   });
-  panelEl.addEventListener("compositionend", function (e) {
-    commitCatField(e.target);
+  panelEl.addEventListener("focusout", function (e) {
+    if (suppressPanelFocusout) return;
+    var target = e.target;
+    if (!target.matches("[data-cat-label]")) return;
+    setTimeout(function () { commitCatField(target); }, 0);
   });
   panelEl.addEventListener("click", function (e) {
     var delBtn = e.target.closest("[data-cat-delete]");
