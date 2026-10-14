@@ -291,6 +291,36 @@ function restoreTypingInProgress(captured) {
   try { el.setSelectionRange(captured.selStart, captured.selEnd); } catch (e) {}
 }
 
+// Same problem as above, more acute: category/template panel text fields call update*() on
+// every "input" event (deliberate - so e.g. a color swap previews instantly), which persists
+// and re-renders that whole list immediately. Without this, every single keystroke destroys
+// and recreates the input, which doesn't just drop the cursor position - it breaks Korean IME
+// composition outright, since the element being composed into disappears mid-stroke.
+function captureFocusedTextField(fieldAttrs) {
+  var el = document.activeElement;
+  if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return null;
+  if (el.type && el.type !== "text" && el.tagName !== "TEXTAREA") return null; // skip color/date/etc.
+  var fieldAttr = null;
+  for (var i = 0; i < fieldAttrs.length; i++) {
+    if (el.hasAttribute(fieldAttrs[i])) { fieldAttr = fieldAttrs[i]; break; }
+  }
+  if (!fieldAttr) return null;
+  var row = el.closest("[data-cat-id], [data-tpl-id]");
+  if (!row) return null;
+  var rowIdAttr = row.hasAttribute("data-cat-id") ? "data-cat-id" : "data-tpl-id";
+  return { rowIdAttr: rowIdAttr, rowId: row.getAttribute(rowIdAttr), fieldAttr: fieldAttr, selStart: el.selectionStart, selEnd: el.selectionEnd };
+}
+
+function restoreFocusedTextField(captured) {
+  if (!captured) return;
+  var row = document.querySelector("[" + captured.rowIdAttr + '="' + captured.rowId + '"]');
+  if (!row) return;
+  var el = row.querySelector("[" + captured.fieldAttr + "]");
+  if (!el) return;
+  el.focus();
+  try { el.setSelectionRange(captured.selStart, captured.selEnd); } catch (e) {}
+}
+
 function applyRemoteState(data) {
   var typing = captureTypingInProgress();
 
@@ -1154,6 +1184,16 @@ export function categoryPanelListHtml() {
   }).join("");
 }
 
+// Renders the category list into the given container while preserving focus/cursor position
+// in whichever 이름 input the user is currently typing in - see captureFocusedTextField above.
+export function renderCategoryList(containerId) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var captured = captureFocusedTextField(["data-cat-label"]);
+  container.innerHTML = categoryPanelListHtml();
+  restoreFocusedTextField(captured);
+}
+
 // ---------- template panel (shared markup wherever a page has an "add task" entry point) ----------
 
 export function templatePanelListHtml() {
@@ -1166,6 +1206,15 @@ export function templatePanelListHtml() {
       '<button type="button" class="trash" data-tpl-delete title="템플릿 삭제">' + icon("trash") + "</button>" +
       "</div>";
   }).join("");
+}
+
+// Same focus-preserving treatment for the template list (template name / subtasks textarea).
+export function renderTemplateList(containerId) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  var captured = captureFocusedTextField(["data-tpl-name", "data-tpl-subtasks"]);
+  container.innerHTML = templatePanelListHtml();
+  restoreFocusedTextField(captured);
 }
 
 export function wireTemplatePanel(panelEl) {

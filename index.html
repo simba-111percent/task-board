@@ -134,7 +134,7 @@ function renderTabs() {
 }
 
 function renderTemplatePanel() {
-  document.getElementById("templateList").innerHTML = Core.templatePanelListHtml();
+  Core.renderTemplateList("templateList");
 }
 
 function renderCounts() {
@@ -150,7 +150,7 @@ function renderFilterRow() {
 }
 
 function renderCategoryPanel() {
-  document.getElementById("catList").innerHTML = Core.categoryPanelListHtml();
+  Core.renderCategoryList("catList");
 }
 
 function renderBoard() {

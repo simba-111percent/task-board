@@ -160,7 +160,7 @@ function renderFilterChips() {
 }
 
 function renderCategoryPanel() {
-  document.getElementById("catList").innerHTML = Core.categoryPanelListHtml();
+  Core.renderCategoryList("catList");
 }
 
 function matchesSearch(t) {
