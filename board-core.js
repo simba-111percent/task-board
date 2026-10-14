@@ -1218,12 +1218,24 @@ export function renderTemplateList(containerId) {
 }
 
 export function wireTemplatePanel(panelEl) {
-  panelEl.addEventListener("input", function (e) {
-    var row = e.target.closest("[data-tpl-id]");
+  // Re-rendering on every "input" event (see renderTemplateList) isn't just a focus problem for
+  // Korean/IME typing - committing mid-composition tears down the very DOM node the IME is
+  // composing into, which cuts each jamo off on its own instead of combining into a syllable.
+  // e.isComposing (true for the input events IME composition itself fires) gates that; the
+  // compositionend listener is the fallback that actually commits once composition finishes.
+  function commitTplField(target) {
+    var row = target.closest("[data-tpl-id]");
     if (!row) return;
     var id = row.dataset.tplId;
-    if (e.target.matches("[data-tpl-name]")) updateTemplate(id, { name: e.target.value });
-    if (e.target.matches("[data-tpl-subtasks]")) updateTemplate(id, { subtasks: parseTemplateLines(e.target.value) });
+    if (target.matches("[data-tpl-name]")) updateTemplate(id, { name: target.value });
+    if (target.matches("[data-tpl-subtasks]")) updateTemplate(id, { subtasks: parseTemplateLines(target.value) });
+  }
+  panelEl.addEventListener("input", function (e) {
+    if (e.isComposing) return;
+    commitTplField(e.target);
+  });
+  panelEl.addEventListener("compositionend", function (e) {
+    commitTplField(e.target);
   });
   panelEl.addEventListener("click", function (e) {
     var delBtn = e.target.closest("[data-tpl-delete]");
@@ -1260,12 +1272,20 @@ export function wireFilterRow(rowEl, rerender) {
 }
 
 export function wireCategoryPanel(panelEl, rerender) {
-  panelEl.addEventListener("input", function (e) {
-    var row = e.target.closest("[data-cat-id]");
+  // See the matching note in wireTemplatePanel - same IME-composition guard, same reason.
+  function commitCatField(target) {
+    var row = target.closest("[data-cat-id]");
     if (!row) return;
     var id = row.dataset.catId;
-    if (e.target.matches("[data-cat-label]")) updateCategory(id, { label: e.target.value });
-    if (e.target.matches("[data-cat-color]")) updateCategory(id, { color: e.target.value });
+    if (target.matches("[data-cat-label]")) updateCategory(id, { label: target.value });
+    if (target.matches("[data-cat-color]")) updateCategory(id, { color: target.value });
+  }
+  panelEl.addEventListener("input", function (e) {
+    if (e.isComposing) return;
+    commitCatField(e.target);
+  });
+  panelEl.addEventListener("compositionend", function (e) {
+    commitCatField(e.target);
   });
   panelEl.addEventListener("click", function (e) {
     var delBtn = e.target.closest("[data-cat-delete]");
