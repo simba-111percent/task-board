@@ -26,13 +26,32 @@
 
   <div class="tabbar-row">
     <nav class="tabbar" id="tabBar"></nav>
-    <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+    <div class="tabbar-actions">
+      <button type="button" class="iconbtn" id="toggleTemplatePanel">템플릿 관리</button>
+      <button type="button" class="iconbtn" id="toggleIdentityPanel"></button>
+    </div>
   </div>
 
   <div class="catpanel" id="identityPanel" hidden>
     <h2>이 기기 사용자</h2>
     <p class="sync-desc">이 브라우저(기기)에서 열 때 "내 업무" 탭에 기본으로 누구 업무가 보일지 정합니다. 기기마다 따로 저장되니 각자 본인 기기에서 본인 이름으로 설정해주세요.</p>
     <div class="identity-choices" id="identityChoices"></div>
+  </div>
+
+  <div class="catpanel" id="templatePanel" hidden>
+    <h2>업무 템플릿</h2>
+    <p class="sync-desc">자주 반복되는 업무(예: 신규 입사자 세팅)를 템플릿으로 저장해두면, 업무를 추가할 때 하위 항목이 한 번에 채워집니다. 케이스마다 달라질 수 있는 항목은 일단 다 넣어두고, 해당 안 되는 건 추가한 뒤 하위 항목에서 지우면 됩니다.</p>
+    <div id="templateList"></div>
+    <div class="tpladd">
+      <div class="tpladd-fields">
+        <input type="text" id="newTplName" placeholder="템플릿 이름 (예: 신규 입사자 세팅)" maxlength="40" />
+        <textarea id="newTplSubtasks" placeholder="하위 항목을 한 줄에 하나씩 입력"></textarea>
+      </div>
+      <button class="addcatbtn" id="addTplBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        추가
+      </button>
+    </div>
   </div>
 
   <div class="toolrow" id="filterRow"></div>
@@ -104,6 +123,7 @@ function render() {
   renderCounts();
   renderFilterRow();
   renderCategoryPanel();
+  renderTemplatePanel();
   renderBoard();
 }
 
@@ -111,6 +131,10 @@ function renderTabs() {
   document.getElementById("tabBar").innerHTML = Core.tabsHtml();
   document.getElementById("toggleIdentityPanel").textContent = Core.identityLabelHtml();
   document.getElementById("identityChoices").innerHTML = Core.identityChoicesHtml();
+}
+
+function renderTemplatePanel() {
+  document.getElementById("templateList").innerHTML = Core.templatePanelListHtml();
 }
 
 function renderCounts() {
@@ -164,6 +188,10 @@ Core.wireIdentityToggle();
 Core.wireIdentityPanel(document.getElementById("identityPanel"), render);
 Core.wireFilterRow(document.getElementById("filterRow"), render);
 Core.wireCategoryPanel(document.getElementById("catPanel"), render);
+Core.wireTemplatePanel(document.getElementById("templatePanel"));
+document.getElementById("toggleTemplatePanel").addEventListener("click", function () {
+  document.getElementById("templatePanel").hidden = !document.getElementById("templatePanel").hidden;
+});
 Core.wireSyncPanelUI();
 Core.wireBackupButtons();
 Core.setSyncStatusCallback(function (text, cls) {

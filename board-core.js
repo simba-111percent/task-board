@@ -82,10 +82,13 @@ function loadState() {
     var raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       var parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.tasks) && Array.isArray(parsed.categories)) return parsed;
+      if (parsed && Array.isArray(parsed.tasks) && Array.isArray(parsed.categories)) {
+        if (!Array.isArray(parsed.templates)) parsed.templates = [];
+        return parsed;
+      }
     }
   } catch (e) {}
-  return { categories: DEFAULT_CATEGORIES.slice(), tasks: [] };
+  return { categories: DEFAULT_CATEGORIES.slice(), tasks: [], templates: [] };
 }
 
 export var state = loadState();
@@ -202,10 +205,12 @@ function queueCloudPush() {
 var dirtyTaskIds = new Set();
 var deletedTaskIds = new Set();
 var categoriesDirty = false;
+var templatesDirty = false;
 
 function markTaskDirty(id) { dirtyTaskIds.add(id); deletedTaskIds.delete(id); }
 function markTaskDeleted(id) { deletedTaskIds.add(id); dirtyTaskIds.delete(id); }
 function markCategoriesDirty() { categoriesDirty = true; }
+function markTemplatesDirty() { templatesDirty = true; }
 
 function tasksArrayToMap(arr) {
   var m = {};
@@ -218,12 +223,15 @@ function pushToCloud() {
   var dirty = dirtyTaskIds;
   var deleted = deletedTaskIds;
   var catsDirty = categoriesDirty;
+  var tplsDirty = templatesDirty;
   dirtyTaskIds = new Set();
   deletedTaskIds = new Set();
   categoriesDirty = false;
+  templatesDirty = false;
 
   var patch = { savedAt: Date.now() };
   if (catsDirty) patch.categories = state.categories;
+  if (tplsDirty) patch.templates = state.templates || [];
   dirty.forEach(function (id) {
     var t = state.tasks.find(function (x) { return x.id === id; });
     if (t) patch["tasks." + id] = t;
@@ -237,7 +245,7 @@ function pushToCloud() {
     .catch(function (err) {
       // Brand new board (doc doesn't exist yet) - seed it with everything currently local.
       if (err && err.code === "not-found") {
-        setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() })
+        setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), templates: state.templates || [], savedAt: Date.now() })
           .then(function () {
             setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok");
           })
@@ -248,6 +256,7 @@ function pushToCloud() {
       dirty.forEach(function (id) { dirtyTaskIds.add(id); });
       deleted.forEach(function (id) { deletedTaskIds.add(id); });
       if (catsDirty) categoriesDirty = true;
+      if (tplsDirty) templatesDirty = true;
       setSyncStatus("동기화 실패 (오프라인?)", "err");
     });
 }
@@ -257,7 +266,7 @@ function pushToCloud() {
 // cleanly (Firestore's dot-path updates need `tasks` to already be a map, not an array).
 function migrateLegacyArrayShape() {
   var ref = doc(db, "boards", syncCode);
-  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() }).catch(function () {});
+  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), templates: state.templates || [], savedAt: Date.now() }).catch(function () {});
 }
 
 // A remote update is allowed through mid-typing in the one place that isn't guarded by
@@ -288,6 +297,10 @@ function applyRemoteState(data) {
   state.categories = categoriesDirty
     ? state.categories
     : (Array.isArray(data.categories) && data.categories.length ? data.categories : DEFAULT_CATEGORIES.slice());
+
+  state.templates = templatesDirty
+    ? state.templates
+    : (Array.isArray(data.templates) ? data.templates : (Array.isArray(state.templates) ? state.templates : []));
 
   var incomingTasks;
   if (Array.isArray(data.tasks)) {
@@ -405,6 +418,11 @@ export function addTask(status, fields) {
   var minOrder = state.tasks.filter(function (t) { return t.status === status; })
     .reduce(function (m, t) { return Math.min(m, t.order); }, Date.now());
   var id = uid();
+  var subtasks = [];
+  var tpl = fields.templateId ? templateById(fields.templateId) : null;
+  if (tpl) {
+    subtasks = tpl.subtasks.map(function (text) { return { id: uid(), text: text, done: false }; });
+  }
   state.tasks.push({
     id: id,
     title: fields.title,
@@ -414,7 +432,7 @@ export function addTask(status, fields) {
     notes: fields.notes || "",
     status: status,
     order: minOrder - 1,
-    subtasks: [],
+    subtasks: subtasks,
     updatedAt: Date.now()
   });
   markTaskDirty(id);
@@ -561,6 +579,40 @@ export function deleteCategory(id) {
   persist();
 }
 
+// ---------- templates (saved subtask checklists for recurring tasks) ----------
+
+export function templateById(id) {
+  return (state.templates || []).find(function (t) { return t.id === id; }) || null;
+}
+
+export function addTemplate(name, subtaskLines) {
+  name = name.trim();
+  if (!name) return;
+  if (!Array.isArray(state.templates)) state.templates = [];
+  state.templates.push({ id: "tpl-" + uid(), name: name, subtasks: subtaskLines || [] });
+  markTemplatesDirty();
+  persist();
+}
+
+export function updateTemplate(id, fields) {
+  var t = templateById(id);
+  if (!t) return;
+  if (fields.name !== undefined) t.name = fields.name;
+  if (fields.subtasks !== undefined) t.subtasks = fields.subtasks;
+  markTemplatesDirty();
+  persist();
+}
+
+export function deleteTemplate(id) {
+  state.templates = (state.templates || []).filter(function (t) { return t.id !== id; });
+  markTemplatesDirty();
+  persist();
+}
+
+export function parseTemplateLines(text) {
+  return String(text || "").split("\n").map(function (s) { return s.trim(); }).filter(function (s) { return s; });
+}
+
 // One-off cleanup for tasks that predate the assignee feature (or were never assigned).
 // Only touches status === "done" tasks with no assignee - deliberately scoped, not a
 // general "assign everything to me" tool.
@@ -585,13 +637,15 @@ export function importState(parsed) {
   if (!parsed || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.categories)) return false;
   state.categories = parsed.categories;
   state.tasks = parsed.tasks;
+  state.templates = Array.isArray(parsed.templates) ? parsed.templates : [];
   activeFilters.clear();
   var ref = doc(db, "boards", syncCode);
   dirtyTaskIds.clear();
   deletedTaskIds.clear();
   categoriesDirty = false;
+  templatesDirty = false;
   setSyncStatus("동기화 중…", "pending");
-  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), savedAt: Date.now() })
+  setDoc(ref, { categories: state.categories, tasks: tasksArrayToMap(state.tasks), templates: state.templates, savedAt: Date.now() })
     .then(function () { setSyncStatus("동기화됨 · " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }), "ok"); })
     .catch(function () { setSyncStatus("동기화 실패 (오프라인?)", "err"); });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -622,8 +676,18 @@ export function formHtml(task, status) {
   var isEdit = !!task;
   var prefillDate = (!isEdit && openForm && openForm.mode === "add" && openForm.date) || "";
   var t = task || { title: "", category: state.categories[0].id, assignee: defaultAssignee(), date: prefillDate, notes: "" };
+  var templates = state.templates || [];
+  var templateRow = (!isEdit && templates.length)
+    ? '<div class="form-row">' +
+      '<select data-f-template>' +
+      '<option value="">템플릿 선택 안 함</option>' +
+      templates.map(function (tpl) { return '<option value="' + tpl.id + '">' + escapeHtml(tpl.name) + " (" + tpl.subtasks.length + "개)</option>"; }).join("") +
+      "</select>" +
+      "</div>"
+    : "";
   return '<div class="form" data-form="' + (isEdit ? "edit" : "add") + '" data-target="' + (isEdit ? task.id : status) + '">' +
     '<input type="text" data-f-title placeholder="업무 내용" maxlength="120" value="' + escapeHtml(t.title) + '" />' +
+    templateRow +
     '<div class="form-row">' +
     '<select data-f-category>' + categoryOptions(t.category) + "</select>" +
     '<select data-f-assignee>' + assigneeOptions(t.assignee) + "</select>" +
@@ -751,12 +815,14 @@ export function wireCardEvents(rootEl) {
     afterInteractionEnds();
   }
   function readForm(formEl) {
+    var templateSelect = formEl.querySelector("[data-f-template]");
     return {
       title: formEl.querySelector("[data-f-title]").value.trim(),
       category: formEl.querySelector("[data-f-category]").value,
       assignee: formEl.querySelector("[data-f-assignee]").value,
       date: formEl.querySelector("[data-f-date]").value,
-      notes: formEl.querySelector("[data-f-notes]").value.trim()
+      notes: formEl.querySelector("[data-f-notes]").value.trim(),
+      templateId: templateSelect ? templateSelect.value : ""
     };
   }
   function commitSubtaskEdit(input) {
@@ -1086,6 +1152,44 @@ export function categoryPanelListHtml() {
       '<button type="button" class="trash" data-cat-delete ' + (canDelete ? "" : "disabled") + '>' + icon("trash") + "</button>" +
       "</div>";
   }).join("");
+}
+
+// ---------- template panel (shared markup wherever a page has an "add task" entry point) ----------
+
+export function templatePanelListHtml() {
+  var templates = state.templates || [];
+  if (!templates.length) return '<p class="sync-desc">아직 저장된 템플릿이 없습니다. 아래에서 추가해보세요.</p>';
+  return templates.map(function (tpl) {
+    return '<div class="tplrow" data-tpl-id="' + tpl.id + '">' +
+      '<input type="text" value="' + escapeHtml(tpl.name) + '" maxlength="40" data-tpl-name placeholder="템플릿 이름" />' +
+      '<textarea data-tpl-subtasks placeholder="하위 항목을 한 줄에 하나씩" rows="4">' + escapeHtml(tpl.subtasks.join("\n")) + "</textarea>" +
+      '<button type="button" class="trash" data-tpl-delete title="템플릿 삭제">' + icon("trash") + "</button>" +
+      "</div>";
+  }).join("");
+}
+
+export function wireTemplatePanel(panelEl) {
+  panelEl.addEventListener("input", function (e) {
+    var row = e.target.closest("[data-tpl-id]");
+    if (!row) return;
+    var id = row.dataset.tplId;
+    if (e.target.matches("[data-tpl-name]")) updateTemplate(id, { name: e.target.value });
+    if (e.target.matches("[data-tpl-subtasks]")) updateTemplate(id, { subtasks: parseTemplateLines(e.target.value) });
+  });
+  panelEl.addEventListener("click", function (e) {
+    var delBtn = e.target.closest("[data-tpl-delete]");
+    if (delBtn) deleteTemplate(delBtn.closest("[data-tpl-id]").dataset.tplId);
+  });
+  var addBtn = document.getElementById("addTplBtn");
+  if (addBtn) {
+    addBtn.addEventListener("click", function () {
+      var nameEl = document.getElementById("newTplName");
+      var subsEl = document.getElementById("newTplSubtasks");
+      addTemplate(nameEl.value, parseTemplateLines(subsEl.value));
+      nameEl.value = "";
+      subsEl.value = "";
+    });
+  }
 }
 
 export function wireFilterRow(rowEl, rerender) {
